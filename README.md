@@ -11,7 +11,7 @@ to a JSON file via `getProgramAccounts`.
 Watch for the next epoch boundary and snapshot when it happens:
 
 ```bash
-cargo run --release -- watch
+cargo run --release -- watch --rpc-url 
 ```
 
 Take a snapshot of current holders immediately (useful for testing):
