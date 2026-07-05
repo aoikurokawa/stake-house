@@ -1,6 +1,7 @@
 use std::{fs, io::BufWriter, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig};
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
@@ -52,6 +53,11 @@ impl Snapshotter {
             .max_connections(5)
             .connect_with(opts)
             .await?;
+
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .context("run database migrations")?;
 
         Ok(Self {
             rpc,
@@ -135,17 +141,26 @@ impl Snapshotter {
         }
         holders.sort_by(|a, b| b.amount.cmp(&a.amount));
 
+        let taken_at = Utc::now();
         let snapshot = Snapshot {
             mint: JITOSOL_MINT.to_string(),
             epoch,
             trigger_slot,
-            taken_at: chrono::Utc::now().to_rfc3339(),
+            taken_at: taken_at.to_rfc3339(),
             num_holders: holders.len(),
             num_zero_balance_skipped: zero_skipped,
             total_amount,
             total_ui_amount: total_amount as f64 / 10f64.powi(JITOSOL_DECIMALS),
             holders,
         };
+
+        self.persist_snapshot(&snapshot, taken_at)
+            .await
+            .context("persist snapshot to database")?;
+        println!(
+            "epoch {}: wrote {} holder rows to database",
+            epoch, snapshot.num_holders
+        );
 
         fs::create_dir_all(&self.out_dir)?;
         let path = self
@@ -158,5 +173,64 @@ impl Snapshotter {
             epoch, snapshot.num_holders, snapshot.total_ui_amount, zero_skipped
         );
         Ok(path)
+    }
+
+    async fn persist_snapshot(&self, snapshot: &Snapshot, taken_at: DateTime<Utc>) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        let lst_id: i64 = sqlx::query_scalar("SELECT id FROM lst WHERE mint = $1")
+            .bind(&snapshot.mint)
+            .fetch_one(&mut *tx)
+            .await
+            .context("look up lst row for mint")?;
+
+        let snapshot_id: i64 = sqlx::query_scalar(
+            "INSERT INTO lst_snapshots \
+                 (lst_id, epoch, trigger_slot, taken_at, num_zero_balance_skipped, total_amount) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (lst_id, epoch) DO UPDATE SET \
+                 trigger_slot = EXCLUDED.trigger_slot, \
+                 taken_at = EXCLUDED.taken_at, \
+                 num_zero_balance_skipped = EXCLUDED.num_zero_balance_skipped, \
+                 total_amount = EXCLUDED.total_amount \
+             RETURNING id",
+        )
+        .bind(lst_id)
+        .bind(snapshot.epoch as i64)
+        .bind(snapshot.trigger_slot as i64)
+        .bind(taken_at)
+        .bind(snapshot.num_zero_balance_skipped as i64)
+        .bind(snapshot.total_amount as i64)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // a re-run for the same epoch replaces the holder set instead of accumulating
+        sqlx::query("DELETE FROM lst_holders WHERE snapshot_id = $1")
+            .bind(snapshot_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let mut token_accounts = Vec::with_capacity(snapshot.holders.len());
+        let mut owners = Vec::with_capacity(snapshot.holders.len());
+        let mut amounts = Vec::with_capacity(snapshot.holders.len());
+        for holder in &snapshot.holders {
+            token_accounts.push(holder.token_account.as_str());
+            owners.push(holder.owner.as_str());
+            amounts.push(holder.amount as i64);
+        }
+
+        sqlx::query(
+            "INSERT INTO lst_holders (snapshot_id, token_account, owner, amount) \
+             SELECT $1, t.* FROM UNNEST($2::text[], $3::text[], $4::bigint[]) AS t",
+        )
+        .bind(snapshot_id)
+        .bind(&token_accounts)
+        .bind(&owners)
+        .bind(&amounts)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 }

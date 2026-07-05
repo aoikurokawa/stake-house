@@ -11,6 +11,8 @@ use stake_house_writer::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
+
     let cli = Cli::parse();
 
     let ws_url = cli.ws_url();
