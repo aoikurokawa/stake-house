@@ -13,4 +13,5 @@ serde_json.workspace = true
 solana-account-decoder.workspace = true
 solana-client.workspace = true
 solana-sdk.workspace = true
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio"] }
 tokio.workspace = true
