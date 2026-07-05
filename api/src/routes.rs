@@ -70,8 +70,8 @@ async fn list_holders(
             .bind(epoch)
             .fetch_optional(&pool)
             .await?;
-    let snapshot_id = snapshot_id
-        .ok_or_else(|| ApiError::NotFound(format!("no snapshot for epoch {epoch}")))?;
+    let snapshot_id =
+        snapshot_id.ok_or_else(|| ApiError::NotFound(format!("no snapshot for epoch {epoch}")))?;
 
     let holders = sqlx::query_as(
         "SELECT h.token_account, h.owner, h.amount, \
