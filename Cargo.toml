@@ -1,9 +1,8 @@
-[package]
-name = "stake-house-writer"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["writer"]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
