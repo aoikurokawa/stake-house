@@ -17,7 +17,9 @@ cargo run --release -- watch --rpc-url
 Take a snapshot of current holders immediately (useful for testing):
 
 ```bash
-cargo run --release -- snapshot
+cargo run --release -- \
+    snapshot \
+    --DB
 ```
 
 ### Options
